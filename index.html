@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculadora de Andaimes</title>
+  
+  <!-- Estilos e bibliotecas necessárias -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Nova biblioteca para gerar tabelas de alta qualidade no PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+
+  <style>
+    /* Estilos customizados para a visualização no PDF, se necessário */
+    .summary-pdf-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: sans-serif;
+    }
+    .summary-pdf-table th, .summary-pdf-table td {
+      border: 1px solid #ddd;
+      padding: 8px;
+    }
+    .summary-pdf-table th {
+      background-color: #f2f2f2;
+      text-align: left;
+    }
+  </style>
+</head>
+<body class="bg-gray-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    /**
+     * Calculadora de Peso de Andaimes — Vandaime & Espiral
+     *
+     * ✅ Recursos:
+     * - Escolha do fornecedor (VANDAIME / ESPIRAL)
+     * - Tabela de Tubos por comprimento (ML = quantidade * comprimento)
+     * - Itens por unidade (acoplamentos, pranchas, pisos, etc.)
+     * - Edição de pesos (por fornecedor) com persistência em localStorage
+     * - Resumo com totais por categoria e total geral
+     * - Exportar/Importar configuração (JSON)
+     * - Exportar PDF com o resumo dos itens
+     *
+     * 🧩 Como completar depois:
+     * 1) Preencha os pesos exatos de cada peça na aba "Configurar Pesos" (lado direito).
+     * 2) Para TUBO, o cálculo usa kg_por_metro * (quantidade * comprimento).
+     * 3) Para itens por unidade, o cálculo usa kg_por_unidade * quantidade.
+     */
+    
+    // ----------------------------- Tipos -----------------------------
+    
+    type SupplierKey = "VANDAIME" | "ESPIRAL";
+    
+    type TubeLength = {
+      code?: string | number;
+      length_m: number; // comprimento em metros
+      kg_per_m?: number; // peso por metro — se ausente, cai no peso padrão da categoria
+    };
+    
+    type UnitItem = {
+      code?: string | number;
+      name: string;
+      kg_per_unit: number; // peso por peça
+    };
+    
+    type Category =
+      | {
+          kind: "tube";
+          name: string;
+          default_kg_per_m: number; // usado se item não tiver kg_per_m específico
+          items: TubeLength[];
+        }
+      | {
+          kind: "unit";
+          name: string;
+          items: UnitItem[];
+        };
+    
+    type SupplierCatalog = {
+      supplier: SupplierKey;
+      categories: Category[];
+    };
+    
+    // ----------------------- Catálogo Padrão -------------------------
+    
+    const defaultCatalog: Record<SupplierKey, SupplierCatalog> = {
+      VANDAIME: {
+        supplier: "VANDAIME",
+        categories: [
+          {
+            kind: "tube",
+            name: "Tubo Galvanizado",
+            // 🔴 Ajuste este valor conforme a sua tabela oficial (ex.: 3.52 kg/m)
+            default_kg_per_m: 3.52,
+            items: [
+              // Comprimentos comuns (exemplo da sua planilha)
+              { code: 20, length_m: 0.45 },
+              { code: 22, length_m: 0.50 },
+              { code: 23, length_m: 0.75 },
+              { code: 24, length_m: 1.00 },
+              { code: 25, length_m: 1.25 },
+              { code: 26, length_m: 1.50 },
+              { code: 27, length_m: 1.75 },
+              { code: 28, length_m: 2.00 },
+              { code: 29, length_m: 2.25 },
+              { code: 30, length_m: 2.50 },
+              { code: 31, length_m: 2.75 },
+              { code: 32, length_m: 3.00 },
+              { code: 33, length_m: 3.25 },
+              { code: 34, length_m: 3.50 },
+              { code: 35, length_m: 3.75 },
+              { code: 36, length_m: 4.00 },
+              { code: 37, length_m: 4.50 },
+              { code: 38, length_m: 5.00 },
+              { code: 39, length_m: 5.50 },
+              { code: 40, length_m: 6.00 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Acoplamentos (Exemplo)",
+            items: [
+              // 🔴 Substitua pelos pesos CORRETOS quando tiver as tabelas finais
+              { code: 47, name: "Acoplamento Fixo 1”x 49", kg_per_unit: 1.10 },
+              { code: 50, name: "Acoplamento Giratório 2”x 49", kg_per_unit: 1.35 },
+              { code: 53, name: "Luva de União (Completa)", kg_per_unit: 0.85 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Prancha de Madeira 0,30m (Exemplo)",
+            items: [
+              { code: 54, name: "0,50 m", kg_per_unit: 2.2 },
+              { code: 55, name: "1,00 m", kg_per_unit: 4.4 },
+              { code: 56, name: "1,50 m", kg_per_unit: 6.6 },
+              { code: 57, name: "2,00 m", kg_per_unit: 8.8 },
+            ],
+          },
+        ],
+      },
+      ESPIRAL: {
+        supplier: "ESPIRAL",
+        categories: [
+          // 🔵 A Espiral (da sua planilha) não usa categoria "tube" aqui; são itens por unidade:
+          {
+            kind: "unit",
+            name: "Pisos Metálicos Fortesp",
+            items: [
+              { code: "06.01.00007.00010", name: "PISO METÁLICO FORTESP 0,27 × 1,05 m", kg_per_unit: 7.70 },
+              { code: "06.01.00007.00011", name: "PISO METÁLICO FORTESP 0,27 × 1,80 m", kg_per_unit: 12.00 },
+              { code: "06.01.00007.00012", name: "PISO METÁLICO FORTESP 0,27 × 2,10 m", kg_per_unit: 14.15 },
+              { code: "06.01.00007.00013", name: "PISO METÁLICO FORTESP 0,27 × 2,40 m", kg_per_unit: 14.95 },
+            ],
+          },
+          { kind: "unit", name: "Rodesp", items: [ { code: "06.02.00002.00031", name: "RODESP", kg_per_unit: 0.30 } ] },
+          {
+            kind: "unit",
+            name: "Postes Multiloc",
+            items: [
+              { code: "06.03.00001.00003", name: "POSTE MULTILOC 0,50 m S/E", kg_per_unit: 2.30 },
+              { code: "06.03.00001.00004", name: "POSTE MULTILOC 1,00 m", kg_per_unit: 5.15 },
+              { code: "06.03.00001.00005", name: "POSTE MULTILOC 1,00 m S/E", kg_per_unit: 4.55 },
+              { code: "06.03.00001.00006", name: "POSTE MULTILOC 1,50 m", kg_per_unit: 7.30 },
+              { code: "06.03.00001.00008", name: "POSTE MULTILOC 2,00 m", kg_per_unit: 9.95 },
+              { code: "06.03.00001.00010", name: "POSTE MULTILOC 2,50 m", kg_per_unit: 12.15 },
+              { code: "06.03.00001.00012", name: "POSTE MULTILOC 3,00 m", kg_per_unit: 14.25 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Travessas Multiloc",
+            items: [
+              { code: "06.03.00002.00001", name: "TRAVESSA MULTILOC 1,05 m", kg_per_unit: 4.40 },
+              { code: "06.03.00002.00002", name: "TRAVESSA MULTILOC 1,80 m", kg_per_unit: 7.10 },
+              { code: "06.03.00002.00003", name: "TRAVESSA MULTILOC 2,10 m", kg_per_unit: 8.15 },
+              { code: "06.03.00002.00004", name: "TRAVESSA MULTILOC 2,40 m", kg_per_unit: 9.50 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Diagonais 48",
+            items: [
+              { code: "06.03.00003.00012", name: "DIAGONAL 48 1820 (vermelha)", kg_per_unit: 10.75 },
+              { code: "06.03.00003.00014", name: "DIAGONAL 48 2120 (amarelo)", kg_per_unit: 11.40 },
+              { code: "06.03.00003.00016", name: "DIAGONAL 48 2420 (cinza)", kg_per_unit: 11.55 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Bases e Acessórios Multiloc",
+            items: [
+              { code: "06.03.00005.00002", name: "PLACA DE BASE REGULÁVEL", kg_per_unit: 2.35 },
+              { code: "06.03.00005.00011", name: "TRAVESSA MULTILOC AJUSTÁVEL", kg_per_unit: 6.55 },
+              { code: "06.03.00005.00012", name: "PORTA DE ACESSO MULTILOC", kg_per_unit: 3.78 },
+              { code: "06.03.00005.00014", name: "TRAVESSA DUPLA AJUSTÁVEL C/AJUSTÁVEL", kg_per_unit: 15.60 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Escadas e Guarda‑corpo",
+            items: [
+              { code: "06.03.00006.00001", name: "ESCADA MARINHEIRO 1,00 × 0,50 m", kg_per_unit: 7.00 },
+              { code: "06.03.00006.00002", name: "ESCADA MARINHEIRO 1,50 × 0,50 m", kg_per_unit: 9.00 },
+              { code: "06.03.00006.00004", name: "ESCADA MARINHEIRO 2,00 × 0,50 m", kg_per_unit: 16.15 },
+              { code: "06.03.00006.00005", name: "GUARDA CORPO P/ESCADA", kg_per_unit: 2.25 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Estruturas Especiais",
+            items: [
+              { code: "06.04.00001.00007", name: "TREVILIGA 0,30 × 3,00 m", kg_per_unit: 32.80 },
+              { code: "06.05.00003.00001", name: "FORÇADO REGULÁVEL DUPLO", kg_per_unit: 5.10 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Perfis L12",
+            items: [
+              { code: "06.06.00002.00004", name: "PERFIL L12 – 2,50", kg_per_unit: 15.15 },
+              { code: "06.06.00002.00005", name: "PERFIL L12 – 3,00", kg_per_unit: 18.80 },
+            ],
+          },
+          {
+            kind: "unit",
+            name: "Rodapés p/ Rodesp",
+            items: [
+              { code: "06.13.00003.00007", name: "RODAPÉ METÁLICO 0,20 × 1,05 m", kg_per_unit: 2.50 },
+              { code: "06.13.00003.00008", name: "RODAPÉ METÁLICO 0,20 × 1,80 m", kg_per_unit: 4.45 },
+              { code: "06.13.00003.00009", name: "RODAPÉ METÁLICO 0,20 × 2,10 m", kg_per_unit: 5.85 },
+              { code: "06.13.00003.00010", name: "RODAPÉ METÁLICO 0,20 × 2,40 m", kg_per_unit: 5.95 },
+            ],
+          },
+        ],
+      },
+    };
+    
+    // ----------------------- Persistência Local ----------------------
+    
+    const STORAGE_KEY = "calc-scaffold-catalog-v1";
+    
+    function loadCatalog() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch {}
+      return defaultCatalog;
+    }
+    
+    function saveCatalog(data) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+    
+    // --------------------------- Utilidades --------------------------
+    
+    function formatKg(n) {
+      return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " kg";
+    }
+    
+    function formatML(n) {
+      return n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " m";
+    }
+    
+    // --------------------------- Componente --------------------------
+    
+    function App() {
+      const [catalog, setCatalog] = React.useState(loadCatalog);
+      const [supplier, setSupplier] = React.useState("VANDAIME");
+      const [message, setMessage] = React.useState(null);
+      const [isExporting, setIsExporting] = React.useState(false);
+    
+      // Quantidades informadas pelo usuário
+      const [qty, setQty] = React.useState({});
+    
+      React.useEffect(() => {
+        saveCatalog(catalog);
+      }, [catalog]);
+    
+      const current = catalog[supplier];
+    
+      const { totalsByCategory, grand } = React.useMemo(() => {
+        const t = {};
+        let grandKg = 0;
+    
+        current.categories.forEach((cat, ci) => {
+          const key = `${ci}-${cat.name}`;
+          if (cat.kind === "tube") {
+            let ml = 0;
+            let kg = 0;
+            cat.items.forEach((it, ii) => {
+              const q = qty[`${supplier}|${ci}|${ii}`] || 0;
+              if (q > 0) {
+                const itemMl = q * it.length_m;
+                const kgpm = it.kg_per_m ?? cat.default_kg_per_m;
+                const itemKg = itemMl * kgpm;
+                ml += itemMl;
+                kg += itemKg;
+              }
+            });
+            t[key] = { ml, kg };
+            grandKg += kg;
+          } else {
+            let kg = 0;
+            cat.items.forEach((it, ii) => {
+              const q = qty[`${supplier}|${ci}|${ii}`] || 0;
+              if (q > 0) kg += q * it.kg_per_unit;
+            });
+            t[key] = { kg };
+            grandKg += kg;
+          }
+        });
+    
+        return { totalsByCategory: t, grand: grandKg };
+      }, [catalog, current.categories, qty, supplier]);
+    
+      // Função para exportar o resumo como PDF
+      const handleExportPdf = async () => {
+        setIsExporting(true);
+        try {
+          const { jsPDF } = window.jspdf;
+          const doc = new jsPDF();
+    
+          const pageMargin = 15;
+          let yOffset = pageMargin;
+    
+          doc.setFontSize(18);
+          doc.text("Resumo de Peso de Andaimes", pageMargin, yOffset);
+          yOffset += 8;
+          doc.setFontSize(12);
+          doc.text(`Fornecedor: ${supplier}`, pageMargin, yOffset);
+          yOffset += 10;
+    
+          current.categories.forEach((cat) => {
+            const catTotal = totalsByCategory[`${current.categories.indexOf(cat)}-${cat.name}`];
+            if (catTotal && catTotal.kg > 0) {
+              const categoryTitle = `${cat.name} (${formatKg(catTotal.kg)})`;
+              doc.setFontSize(14);
+              doc.text(categoryTitle, pageMargin, yOffset);
+              yOffset += 5;
+    
+              const tableData = [];
+              const headers = cat.kind === "tube" 
+                ? ["Código", "Comprimento (m)", "Quantidade", "ML", "Peso (kg)"]
+                : ["Código", "Descrição", "Peso (kg/un)", "Quantidade", "Peso Total (kg)"];
+    
+              cat.items.forEach((item, itemIndex) => {
+                const key = `${supplier}|${current.categories.indexOf(cat)}|${itemIndex}`;
+                const q = qty[key] || 0;
+                if (q > 0) {
+                  if (cat.kind === "tube") {
+                    const ml = q * item.length_m;
+                    const kgpm = item.kg_per_m ?? cat.default_kg_per_m;
+                    const kg = ml * kgpm;
+                    tableData.push([
+                      item.code ?? "—",
+                      item.length_m.toFixed(2),
+                      q,
+                      ml.toFixed(2),
+                      kg.toFixed(2)
+                    ]);
+                  } else {
+                    const kg = q * item.kg_per_unit;
+                    tableData.push([
+                      item.code ?? "—",
+                      item.name,
+                      item.kg_per_unit.toFixed(2),
+                      q,
+                      kg.toFixed(2)
+                    ]);
+                  }
+                }
+              });
+    
+              if (tableData.length > 0) {
+                // @ts-ignore
+                doc.autoTable({
+                  startY: yOffset,
+                  head: [headers],
+                  body: tableData,
+                  margin: { left: pageMargin, right: pageMargin },
+                  didDrawPage: (data) => {
+                    yOffset = data.cursor.y + 10;
+                  }
+                });
+                yOffset = doc.autoTable.previous.finalY + 10;
+              } else {
+                yOffset += 5;
+              }
+            }
+          });
+          
+          doc.setFontSize(16);
+          doc.text(`Peso Total: ${formatKg(grand)}`, pageMargin, yOffset + 10);
+    
+          doc.save(`Resumo_Andaimes_${supplier}.pdf`);
+          setMessage({ type: 'success', text: 'PDF gerado com sucesso!' });
+        } catch (error) {
+          console.error('Erro ao gerar PDF:', error);
+          setMessage({ type: 'error', text: 'Erro ao gerar o PDF. Tente novamente.' });
+        } finally {
+          setIsExporting(false);
+          setTimeout(() => setMessage(null), 3000); // Limpa a mensagem após 3 segundos
+        }
+      };
+    
+    
+      // --------------------- UI Auxiliares ---------------------
+    
+      function Header() {
+        return (
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold">Calculadora de Peso de Andaimes</h1>
+              <p className="text-sm opacity-70">Selecione o fornecedor, informe as quantidades e veja ML e peso total.</p>
+            </div>
+    
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-semibold">Fornecedor</label>
+              <select
+                className="border rounded-xl px-3 py-2"
+                value={supplier}
+                onChange={(e) => setSupplier(e.target.value)}
+              >
+                <option value="VANDAIME">Vandaime</option>
+                <option value="ESPIRAL">Espiral</option>
+              </select>
+            </div>
+          </div>
+        );
+      }
+    
+      function QtyInput({ k }) {
+        return (
+          <input
+            type="number"
+            min={0}
+            className="w-24 border rounded-lg px-2 py-1 text-right"
+            value={qty[k] ?? 0}
+            onChange={(e) => setQty((s) => ({ ...s, [k]: Number(e.target.value) }))}
+          />
+        );
+      }
+    
+      function CategoryCard({ cat, ci }) {
+        if (cat.kind === "tube") {
+          const total = totalsByCategory[`${ci}-${cat.name}`];
+          return (
+            <div className="bg-white rounded-2xl shadow p-4 md:p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg md:text-xl font-semibold">{cat.name} · <span className="opacity-70">{cat.default_kg_per_m} kg/m</span></h3>
+                <span className="text-sm opacity-70">(quantidade × comprimento)</span>
+              </div>
+              <div className="overflow-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left">
+                    <tr className="border-b">
+                      <th className="py-2">Cód.</th>
+                      <th>Comp. (m)</th>
+                      <th className="text-right">Qtd</th>
+                      <th className="text-right">ML</th>
+                      <th className="text-right">Peso (kg)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cat.items.map((it, ii) => {
+                      const key = `${supplier}|${ci}|${ii}`;
+                      const q = qty[key] || 0;
+                      const ml = q * it.length_m;
+                      const kgpm = it.kg_per_m ?? cat.default_kg_per_m;
+                      const kg = ml * kgpm;
+                      return (
+                        <tr key={key} className="border-b hover:bg-gray-50">
+                          <td className="py-1">{it.code ?? "—"}</td>
+                          <td>{it.length_m.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="text-right"><QtyInput k={key} /></td>
+                          <td className="text-right tabular-nums">{ml ? formatML(ml) : "—"}</td>
+                          <td className="text-right tabular-nums">{kg ? formatKg(kg) : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-end gap-6 mt-3 text-sm">
+                <div>ML total: <strong>{formatML(total?.ml ?? 0)}</strong></div>
+                <div>Peso: <strong>{formatKg(total?.kg ?? 0)}</strong></div>
+              </div>
+            </div>
+          );
+        }
+    
+        // unit
+        const total = totalsByCategory[`${ci}-${cat.name}`];
+        return (
+          <div className="bg-white rounded-2xl shadow p-4 md:p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg md:text-xl font-semibold">{cat.name}</h3>
+              <span className="text-sm opacity-70">(peso por unidade)</span>
+            </div>
+            <div className="overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left">
+                  <tr className="border-b">
+                    <th className="py-2">Cód.</th>
+                    <th>Descrição</th>
+                    <th className="text-right">kg/un</th>
+                    <th className="text-right">Qtd</th>
+                    <th className="text-right">Peso (kg)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cat.items.map((it, ii) => {
+                    const key = `${supplier}|${ci}|${ii}`;
+                    const q = qty[key] || 0;
+                    const kg = q * it.kg_per_unit;
+                    return (
+                      <tr key={key} className="border-b hover:bg-gray-50">
+                        <td className="py-1">{it.code ?? "—"}</td>
+                        <td>{it.name}</td>
+                        <td className="text-right tabular-nums">{it.kg_per_unit.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="text-right"><QtyInput k={key} /></td>
+                        <td className="text-right tabular-nums">{kg ? formatKg(kg) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-end gap-6 mt-3 text-sm">
+              <div>Peso: <strong>{formatKg(total?.kg ?? 0)}</strong></div>
+            </div>
+          </div>
+        );
+      }
+    
+      function ConfigPanel() {
+        const [open, setOpen] = React.useState(true);
+        const [jsonStr, setJsonStr] = React.useState("\n// Exporte, edite e importe o JSON abaixo para atualizar as tabelas.\n" + JSON.stringify(catalog, null, 2));
+        React.useEffect(() => setJsonStr(JSON.stringify(catalog, null, 2)), [catalog]);
+    
+        return (
+          <div className={`rounded-2xl border shadow bg-white ${open ? "p-4" : "p-2"}`}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Configurar Pesos</h3>
+              <button className="text-sm underline" onClick={() => setOpen((o) => !o)}>
+                {open ? "recolher" : "expandir"}
+              </button>
+            </div>
+            {open && (
+              <div className="mt-3 space-y-3">
+                <div className="text-sm opacity-80">
+                  Edite as tabelas de cada fornecedor. Para TUBOS, ajuste <code>default_kg_per_m</code> ou defina <code>kg_per_m</code> por item.
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    className="px-3 py-2 rounded-xl border shadow text-sm"
+                    onClick={() => setCatalog(defaultCatalog)}
+                  >
+                    Restaurar padrão
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-xl border shadow text-sm"
+                    onClick={() => navigator.clipboard.writeText(JSON.stringify(catalog))}
+                  >
+                    Copiar JSON
+                  </button>
+                </div>
+                <textarea
+                  className="w-full h-72 border rounded-xl p-3 font-mono text-xs"
+                  value={jsonStr}
+                  onChange={(e) => setJsonStr(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <button
+                    className="px-3 py-2 rounded-xl bg-black text-white text-sm"
+                    onClick={() => {
+                      try {
+                        const parsed = JSON.parse(jsonStr);
+                        setCatalog(parsed);
+                        setMessage({ type: 'success', text: 'JSON importado com sucesso!' });
+                      } catch (e) {
+                        setMessage({ type: 'error', text: 'JSON inválido. Verifique a sintaxe.' });
+                      }
+                    }}
+                  >
+                    Importar JSON
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+    
+      return (
+        <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 text-gray-950 p-4 md:p-8">
+          <div className="max-w-6xl mx-auto space-y-6">
+            <Header />
+    
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Coluna principal */}
+              <div className="lg:col-span-2 space-y-6">
+                {current.categories.map((cat, ci) => (
+                  <CategoryCard key={`${supplier}-${ci}`} cat={cat} ci={ci} />
+                ))}
+              </div>
+    
+              {/* Lateral direita */}
+              <div className="space-y-6">
+                <div className="bg-white rounded-2xl shadow p-4 md:p-6">
+                  <div id="summary-content">
+                    <h3 className="text-lg md:text-xl font-semibold mb-2">Resumo</h3>
+                    <div className="space-y-2 text-sm">
+                      {current.categories.map((cat, ci) => {
+                        const t = totalsByCategory[`${ci}-${cat.name}`];
+                        return (
+                          <div key={ci} className="flex items-center justify-between">
+                            <div>
+                              <div className="font-medium">{cat.name}</div>
+                              {cat.kind === "tube" && (
+                                <div className="opacity-70">ML: {formatML(t?.ml ?? 0)}</div>
+                              )}
+                            </div>
+                            <div className="font-semibold">{formatKg(t?.kg ?? 0)}</div>
+                          </div>
+                        );
+                      })}
+                      <hr className="my-2" />
+                      <div className="flex items-center justify-between text-base">
+                        <div className="font-semibold">Peso Total</div>
+                        <div className="font-extrabold">{formatKg(grand)}</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <button
+                      onClick={handleExportPdf}
+                      disabled={isExporting}
+                      className={`w-full flex justify-center items-center gap-2 px-4 py-2 rounded-xl text-white font-semibold transition-colors ${isExporting ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'}`}
+                    >
+                      {isExporting ? (
+                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      ) : (
+                        "Baixar PDF do Resumo"
+                      )}
+                    </button>
+                  </div>
+                </div>
+    
+                <ConfigPanel />
+              </div>
+            </div>
+            
+            {message && (
+              <div className={`fixed bottom-4 right-4 px-6 py-3 rounded-lg shadow-lg text-white font-semibold transform transition-transform duration-300 ${message.type === 'success' ? 'bg-green-500' : 'bg-red-500'}`}>
+                {message.text}
+              </div>
+            )}
+    
+            <footer className="text-xs opacity-60 text-center pt-4">
+              v1.1 • Estrutura inicial pronta para receber os pesos oficiais de Vandaime e Espiral.
+            </footer>
+          </div>
+        </div>
+      );
+    }
+    
+    // Renderiza a aplicação
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
